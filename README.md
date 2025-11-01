@@ -21,6 +21,11 @@ But there is just so much left to do:
   * Display the images from the cache as they become current.  A separate program so that multiple instances can use the same cache.
   * A program to clear used images from the cache.
 
+## Licenses
+
+This repository includes code originally authored by David Vallado and downloaded from https://celestrak.org/publications/AIAA/2006-6753/. The copyright of all code under [main/celestrak](main/celestrak) remains his.  See [main/celestrak/README.md](main/celestrak/README.md) for details on the license.
+
+The license on everything else is Apache-2.0.
 
 ## Setting up
 
