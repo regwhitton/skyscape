@@ -5,7 +5,13 @@ The originals were written in C++ by David Vallado and are now mostly available 
 
 Some (the SPG4 routines) are also available in a ZIP file linked to from https://celestrak.org/publications/AIAA/2006-6753/.  On the page https://celestrak.org/publications/AIAA/2006-6753/faq.php the license is given as:
 
-    There is no license associated with the code and you may use it for any purpose—personal or commercial—as you wish. We ask only that you include citations in your documentation and source code to show the source of the code and provide links to the main page, to facilitate communications regarding any questions on the theory or source code. 
+    There is no license associated with the code and you
+    may use it for any purpose—personal or commercial—as
+    you wish. We ask only that you include citations in
+    your documentation and source code to show the source
+    of the code and provide links to the main page, to
+    facilitate communications regarding any questions on
+    the theory or source code. 
 
 Earlier work on SGP4 models can be seen in https://celestrak.org/NORAD/documentation/spacetrk.pdf with FORTRAN routines by Dr T.S. Kelso (https://celestrak.org/webmaster.php).
 

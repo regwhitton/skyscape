@@ -23,7 +23,7 @@ But there is just so much left to do:
 
 ## Licenses
 
-This repository includes code originally authored by David Vallado and downloaded from https://celestrak.org/publications/AIAA/2006-6753/. The copyright of all code under [main/celestrak](main/celestrak) remains his.  See [main/celestrak/README.md](main/celestrak/README.md) for details on the license.
+This repository includes code authored by David Vallado. The copyright of all code under [main/celestrak](main/celestrak) remains his and has a separate license.  See [main/celestrak/README.md](main/celestrak/README.md) for details on the license.
 
 The license on everything else is Apache-2.0.
 
