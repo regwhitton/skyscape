@@ -2,66 +2,88 @@ import glob
 import pyopencl as cl
 import numpy as np
 from datetime import datetime, timezone, timedelta
-from PIL import Image
+from PIL import Image, ExifTags
 import os
 import shutil
+import queue
+import time as tm
+import threading
 
 import tle
 import dtype as dt
 import jtime
 
-# So that we can reuse kernels we need to put programs, kernels and buffers
-# into class, and have method that reuses context. etc.
-
-# Should all kernals be in the same program.  Would it make execution faster by putting everthing on compute unit?
-
 # Current difference between UT1 and UTC (UT1-UTC).
 # https://www.nist.gov/pml/time-and-frequency-division/time-realization/leap-seconds
 UT1_UTC_DIFF_SECS=0.0614  # 2025-7-28
-# 300 one second frames (5 mins)
+
+# RGBA - red, green, blue & alpha.
 IMAGE_CHANNELS=4
-# IMAGE_FRAMES=5*60
-IMAGE_FRAMES=10
-FRAME_PERIOD_SECS=1.0
+
+# The size of each image
 IMAGE_HEIGHT=1400
 IMAGE_WIDTH=1400
-IMAGES_PATH="./caches/images/"
+
+# Period between each image/frame
+# FRAME_PERIOD_SECS=1.0
+FRAME_PERIOD_SECS=0.25
+
+# The number of images/frames generated in one pass.
+# Processing of intermediate for a satellite is skipped if both the first and last are not in view.
+# So the larger the number, the more efficient, but the greater danger of sats that should be in view
+# getting missed out.  We can assume that sats take at least 5 mins to cross the sky.
+# IMAGE_FRAMES=5*60
+# IMAGE_FRAMES=60
+IMAGE_FRAMES=4*15
 
 def main():
-    if os.path.isdir(IMAGES_PATH):
-        shutil.rmtree(IMAGES_PATH)
-    os.mkdir(IMAGES_PATH)
+    q = queue.Queue()
+    create_images_thread = threading.Thread(target=create_images, args=(q,))
+    create_images_thread.start()
+    write_images(q)
+    create_images_thread.join()
 
+def create_images(queue):
     opencl = OpenCl()
-
-    tle_array = _read_tle_files(opencl)
-
     satrec_size = _find_satrec_size(opencl)
 
-    #print(len(tle_array))
-    #print(tle_array[0])
-    #print(tle_array[len(tle_array)-1])
-    #print(satrec_size)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    # now = datetime.fromisoformat('2025-10-24 16:24:19.000000+00:00')
+    start_time = now + timedelta(seconds=10)
+
+    # TODO: loop back to here at intervals
+    tle_array = _read_tle_files(opencl)
 
     satrec_buf = _calc_satrecs(opencl, tle_array, satrec_size)
     n_tle = len(tle_array)
 
-    now = datetime.now(timezone.utc)
-    # now = datetime.fromisoformat('2025-10-24 16:24:19.760165+00:00')
-    start_time = now + timedelta(seconds=30)
-
-    # Do 300 frames (5 mins) in a block.
     n_jtimes = IMAGE_FRAMES
     n_jtimes_seconds = timedelta(seconds=n_jtimes * FRAME_PERIOD_SECS)
     jTimeCalculator = _JTimeCalculator(opencl, n_jtimes, FRAME_PERIOD_SECS)
     projectionsGenerator = _ProjectionsGenerator(opencl, n_jtimes, jTimeCalculator.jtime_buf, n_tle, satrec_buf)
-    for iBlock in range(5):
+    frame_delta = timedelta(seconds=FRAME_PERIOD_SECS)
+
+    while True:
+        # Don't work too far ahead.
+        while start_time > datetime.now(timezone.utc) + (3 * n_jtimes_seconds):
+            tm.sleep(1)
+
         jtimes_event = jTimeCalculator.calc_jtimes(start_time)
+        time = start_time
         frames = projectionsGenerator.generate_projections(jtimes_event)
-        for iFrame, frame in enumerate(frames):
+        for frame in frames:
+            time += frame_delta
+            timef = time.isoformat(timespec='milliseconds')
             img = Image.fromarray(frame)
-            path="{path}frame_{frm:010d}.png".format(path=IMAGES_PATH, frm=iBlock*IMAGE_FRAMES+iFrame)
-            img.save(path)
+            
+            # https://exiftool.org/TagNames/EXIF.html
+            exif = img.getexif()
+            exif[0x0132] = timef
+
+            # path=IMAGES_PATH + timef + ".png"
+            # img.save(path, exif=exif)
+            queue.put((time, img,))
+
         start_time += n_jtimes_seconds
 
 class OpenCl:
@@ -269,5 +291,35 @@ class _ProjectionsGenerator:
 #     print("complete: {}, {} ns".format(event.profile.complete, event.profile.complete - event.profile.end))
 #     print("total   : {} ns".format(event.profile.complete - event.profile.queued))
 
+def write_images(queue):
+    while True:
+        dtime, img = queue.get()
+        # print("new file: {}".format(dtime))
+        img.save('caches/next-frame.png')
+        pause(dtime)
+        # pause seems uneven.
+        # pause.until(dtime)
+        shutil.move('caches/next-frame.png', 'caches/frame.png')
+        # print("moved file: {} - {}".format(dtime, datetime.now(timezone.utc)))
+
+def pause(dtime):
+    now = datetime.now(timezone.utc)
+    secs_to_wait = (dtime - now).total_seconds()
+    if secs_to_wait < 0.0:
+        return
+    tm.sleep(secs_to_wait)
+
+# def pause(dtime):
+#     while True:
+#         now = datetime.now(timezone.utc)
+#         secs_to_wait = (dtime - now).total_seconds()
+#         if secs_to_wait < 0.01:
+#             return
+#         elif secs_to_wait < 1.0:
+#             tm.sleep(0.01)
+#         else:
+#             tm.sleep(1.0)
+
 if __name__ == "__main__":
+    #create_images()
     main()

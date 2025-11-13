@@ -4,17 +4,21 @@
 Currently it generates a series of images of the sky above Greenwich, showing satellites and other
 man made objects passing overhead.
 
-![Sample frames](./sample-frames.gif)
+Each satellite is currently just a single pixel.  So you probably need to zoom in or click to enlarge, before you can see them tracking across the sky.
+
+![Sample frames](./sample-frames.gif) 
 
 But there is just so much left to do:
 
 * Workout why the line of geo-stationary satellites are appearing near the top, when south is supposed to be at the bottom :-)
-* Displaying the images on rotation.
+* Terminate image generation on a key press.
+* Switch to 16bit pixels instead of 32, to avoid narrowing during saving to PNG format.
+* Find a better way to displaying the images on rotation (without the intermittent stutter)
 * Include the sun, moon and stars.
 * Do a gradient fill to make the projection look domed.
-* Label or colour objects by type, size or visibility. 
+* Label or colour objects by type, size, visibility or altitude. 
 * Add text to explain what can be seen.
-* Fetch satellite data from Space Track instead of Celestrak, so that Radar Cross Section (RCS) can be obtained.
+* Fetch SATCAT data and use Radar Cross Section (RCS) to distinguish small and large objects. https://celestrak.org/satcat/records.php?GROUP=visual&FORMAT=CSV&ONORBIT=true
 * Restructure the code into 4 distinct programs:
   * Fetch the satellite data, and update it periodically (obeying the frequency rules). Needs to move complete data into position atomically for use by the next stage. Currently this is a bash script which sort of works.
   * Generate a cache of images for display in the up-coming minutes.
@@ -29,7 +33,7 @@ The license on everything else is Apache-2.0.
 
 ## Setting up
 
-Currently set up is only outlined for Linux.  The software should work in other environments, but you will need to determine the set up for yourself.
+Currently set up is only outlined for Linux.  Much of the software should work in other environments, but you will need to determine the set up for yourself (include how to display the images).
 
 The assumption is that you have a machine with a GPU that can be accessed using OpenCL.
 
@@ -96,7 +100,7 @@ If this shows radeonsi as platform 0, device 0, then create the `.device.mk` wit
 
 Try the `make test-setup` command again.
 
-You may get the message `ac_compute_device_uuid's output is based on invalid pci bus info`.  This is an apparently harmless warning.  "ac\_compute\_device\_uuid" is a function that generates a unique id for your GPU.  It outputs this message when it cannot access details of your hardware, but continues without it.  Some sources say tht adding your user to the `video` and `render` groups and restarting can avoid the warning - but it didn't work for me.
+With radeonsi you may get the message `ac_compute_device_uuid's output is based on invalid pci bus info`.  This is an apparently harmless warning.  "ac\_compute\_device\_uuid" is a function that generates a unique id for your GPU.  It outputs this message when it cannot access details of your hardware, but continues without it.  Some sources say that adding your username to the `video` and `render` groups and restarting can avoid the warning - but it didn't work for me.
 
 
 #### Testing
@@ -111,6 +115,12 @@ Fetch Celestrak TLE data with this command:
 
     make tle-fetch
 
-Produce a series of images (in cache/images):
+Start the generation of images:
 
     make run
+
+In another terminal - start image display.
+
+    make view
+
+You can use up & down arrows to zoom in feh.

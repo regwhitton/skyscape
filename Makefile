@@ -20,8 +20,12 @@ dependencies: venv/requirements-updated ## Create Python virtual environment and
 tle-fetch: ## Fetch TLE records from Celestrak.
 	./tle-fetch.sh
 
-run: dependencies ## Run
+run: dependencies ## Generating skyscape imagas
 	$(ACTIVATE); $(OPENCL_ENV) python main/main.py
+
+view: ## View skyscape
+	while [ ! -e caches/frame.png ];do echo waiting; sleep 5; done;
+	feh --borderless --fullscreen --hide-pointer --keep-zoom-vp --auto-reload caches/frame.png
 
 .PHONY: test
 test: dependencies ## Run tests
