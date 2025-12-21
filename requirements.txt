@@ -1,6 +1,6 @@
 pyopencl
-siphash24
 pillow
+PySimpleGUI-4-foss
 
 # For development only
 pytest

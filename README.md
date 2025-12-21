@@ -11,9 +11,6 @@ Each satellite is currently just a single pixel.  So you probably need to zoom i
 But there is just so much left to do:
 
 * Workout why the line of geo-stationary satellites are appearing near the top, when south is supposed to be at the bottom :-)
-* Terminate image generation on a key press.
-* Switch to 16bit pixels instead of 32, to avoid narrowing during saving to PNG format.
-* Find a better way to displaying the images on rotation (without the intermittent stutter)
 * Include the sun, moon and stars.
 * Do a gradient fill to make the projection look domed.
 * Label or colour objects by type, size, visibility or altitude. 
@@ -54,9 +51,9 @@ You will also need:
 * python-is-python3 (to set up python3 to run when you use python at the command line)
 * python3-pip
 * python3-venv
+* python3-tk
 * mesa-opencl-icd (other CL platforms are available)
 * clinfo (to help find out what GPU devices you have)
-* feh (to display images - this may change)
 
 The following command will then download and install all the python packages required into a sub-directory called venv.
 
@@ -115,12 +112,7 @@ Fetch Celestrak TLE data with this command:
 
     make tle-fetch
 
-Start the generation of images:
+Start the generation and display of skyscape images:
 
     make run
 
-In another terminal - start image display.
-
-    make view
-
-You can use up & down arrows to zoom in feh.

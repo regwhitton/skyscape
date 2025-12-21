@@ -2,12 +2,13 @@ import glob
 import pyopencl as cl
 import numpy as np
 from datetime import datetime, timezone, timedelta
-from PIL import Image, ExifTags
+from PIL import Image, ImageTk
 import os
 import shutil
 import queue
 import time as tm
 import threading
+import PySimpleGUI as sg
 
 import tle
 import dtype as dt
@@ -21,8 +22,13 @@ UT1_UTC_DIFF_SECS=0.0614  # 2025-7-28
 IMAGE_CHANNELS=4
 
 # The size of each image
-IMAGE_HEIGHT=1400
-IMAGE_WIDTH=1400
+# Should get actual canvas size once gui rendered.
+(width, height) = sg.Window.get_screen_size()
+canvas_size = (width if width < height else height) - 16
+#IMAGE_HEIGHT=1034
+#IMAGE_WIDTH=1034
+IMAGE_HEIGHT=canvas_size
+IMAGE_WIDTH=canvas_size
 
 # Period between each image/frame
 # FRAME_PERIOD_SECS=1.0
@@ -36,19 +42,15 @@ FRAME_PERIOD_SECS=0.25
 # IMAGE_FRAMES=60
 IMAGE_FRAMES=4*15
 
-def main():
-    q = queue.Queue()
-    create_images_thread = threading.Thread(target=create_images, args=(q,))
-    create_images_thread.start()
-    write_images(q)
-    create_images_thread.join()
+class Flags:
+    def __init__(self):
+        self.exiting = False
 
-def create_images(queue):
+def create_images(queue, flags):
     opencl = OpenCl()
     satrec_size = _find_satrec_size(opencl)
 
     now = datetime.now(timezone.utc).replace(microsecond=0)
-    # now = datetime.fromisoformat('2025-10-24 16:24:19.000000+00:00')
     start_time = now + timedelta(seconds=10)
 
     # TODO: loop back to here at intervals
@@ -63,26 +65,19 @@ def create_images(queue):
     projectionsGenerator = _ProjectionsGenerator(opencl, n_jtimes, jTimeCalculator.jtime_buf, n_tle, satrec_buf)
     frame_delta = timedelta(seconds=FRAME_PERIOD_SECS)
 
-    while True:
+    while not flags.exiting:
         # Don't work too far ahead.
-        while start_time > datetime.now(timezone.utc) + (3 * n_jtimes_seconds):
+        while not flags.exiting and start_time > datetime.now(timezone.utc) + (3 * n_jtimes_seconds):
             tm.sleep(1)
+        if flags.exiting:
+            break
 
         jtimes_event = jTimeCalculator.calc_jtimes(start_time)
         time = start_time
         frames = projectionsGenerator.generate_projections(jtimes_event)
         for frame in frames:
             time += frame_delta
-            timef = time.isoformat(timespec='milliseconds')
-            img = Image.fromarray(frame)
-            
-            # https://exiftool.org/TagNames/EXIF.html
-            exif = img.getexif()
-            exif[0x0132] = timef
-
-            # path=IMAGES_PATH + timef + ".png"
-            # img.save(path, exif=exif)
-            queue.put((time, img,))
+            queue.put((time, frame,))
 
         start_time += n_jtimes_seconds
 
@@ -291,35 +286,68 @@ class _ProjectionsGenerator:
 #     print("complete: {}, {} ns".format(event.profile.complete, event.profile.complete - event.profile.end))
 #     print("total   : {} ns".format(event.profile.complete - event.profile.queued))
 
-def write_images(queue):
-    while True:
-        dtime, img = queue.get()
-        # print("new file: {}".format(dtime))
-        img.save('caches/next-frame.png')
-        pause(dtime)
-        # pause seems uneven.
-        # pause.until(dtime)
-        shutil.move('caches/next-frame.png', 'caches/frame.png')
-        # print("moved file: {} - {}".format(dtime, datetime.now(timezone.utc)))
+def gui_display_images(queue, flags):
+    # Better to create gui first to workout available size.
+    # Might need to do read for gui to render.
+    img = sg.Image(key='frame', expand_x=True, expand_y=True, background_color='black')
+    layout = [
+        [
+            img
+        ]
+    ]
 
-def pause(dtime):
-    now = datetime.now(timezone.utc)
-    secs_to_wait = (dtime - now).total_seconds()
-    if secs_to_wait < 0.0:
-        return
-    tm.sleep(secs_to_wait)
+    window = sg.Window('', layout,
+        background_color='black',
+        return_keyboard_events=True,
+        location=(0,0),
+        size=sg.Window.get_screen_size(),
+        keep_on_top=True,
+        modal=True
+    )
 
-# def pause(dtime):
-#     while True:
-#         now = datetime.now(timezone.utc)
-#         secs_to_wait = (dtime - now).total_seconds()
-#         if secs_to_wait < 0.01:
-#             return
-#         elif secs_to_wait < 1.0:
-#             tm.sleep(0.01)
-#         else:
-#             tm.sleep(1.0)
+    max_wait_millis = 1000
+    max_wait_delta = timedelta(milliseconds=max_wait_millis)
+
+    while not flags.exiting:
+        ftime, frame = queue.get()
+        tk_frame = ImageTk.PhotoImage(image=Image.fromarray(frame))
+
+        waiting_for_frame_time=True
+        while waiting_for_frame_time:
+            now = datetime.now(timezone.utc)
+            if ftime <= now:
+                millisec_wait = 0
+                waiting_for_frame_time=False
+            elif ftime > now + max_wait_delta:
+                millisec_wait = max_wait_millis
+            else:
+                wait_delta = ftime - now
+                millisec_wait = wait_delta.seconds * 1000 + wait_delta.microseconds / 1000 
+
+            event, values = window.read(timeout=millisec_wait)
+            #print(img.get_size())
+        
+            if event == sg.WINDOW_CLOSED:
+                flags.exiting=True
+                break
+            key = event.split(':',1)[0].lower()
+            if key == 'q' or key == 'escape':
+                flags.exiting=True
+                break
+
+        window['frame'].update(data=tk_frame)
+        queue.task_done()
+
+    window.close()
+
+def main():
+    flags = Flags()
+    q = queue.Queue()
+    create_images_thread = threading.Thread(target=create_images, args=(q, flags,))
+    create_images_thread.start()
+    gui_display_images(q, flags)
+    create_images_thread.join()
 
 if __name__ == "__main__":
-    #create_images()
     main()
+
