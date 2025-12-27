@@ -24,11 +24,13 @@ IMAGE_CHANNELS=4
 # The size of each image
 # Should get actual canvas size once gui rendered.
 (width, height) = sg.Window.get_screen_size()
-canvas_size = (width if width < height else height) - 16
-#IMAGE_HEIGHT=1034
-#IMAGE_WIDTH=1034
-IMAGE_HEIGHT=canvas_size
-IMAGE_WIDTH=canvas_size
+LANDSCAPE=width > height
+if LANDSCAPE:
+    IMAGE_HEIGHT=height
+    IMAGE_WIDTH=height
+else:
+    IMAGE_HEIGHT=width
+    IMAGE_WIDTH=width
 
 # Period between each image/frame
 # FRAME_PERIOD_SECS=1.0
@@ -53,7 +55,8 @@ def create_images(queue, flags):
     now = datetime.now(timezone.utc).replace(microsecond=0)
     start_time = now + timedelta(seconds=10)
 
-    # TODO: loop back to here at intervals
+    # TODO: loop back to here at intervals. Perhaps do every loop but skip if inode not changed.
+    # Perhaps just update tle records that have changed.
     tle_array = _read_tle_files(opencl)
 
     satrec_buf = _calc_satrecs(opencl, tle_array, satrec_size)
@@ -289,21 +292,46 @@ class _ProjectionsGenerator:
 def gui_display_images(queue, flags):
     # Better to create gui first to workout available size.
     # Might need to do read for gui to render.
-    img = sg.Image(key='frame', expand_x=True, expand_y=True, background_color='black')
-    layout = [
-        [
-            img
-        ]
-    ]
+    sg.theme('Black')
+    sg.set_options(element_padding=(0,0),margins=(0,0))
+
+    img = sg.Image(
+        key='frame',
+        size=(IMAGE_HEIGHT,IMAGE_WIDTH,),
+        enable_events=True
+    )
+    time_txt = sg.Text(
+        key='time',
+        expand_x=True
+    )
+    pos_txt = sg.Text(
+        key='pos',
+        expand_x=True
+    )
+    info_panel = sg.Column([
+            [time_txt],
+            [pos_txt],
+            [sg.VPush()]
+        ],
+        expand_x=True,
+        expand_y=True,
+        pad=(10,2)
+    )
+    if LANDSCAPE:
+        layout = [[ img, info_panel ]]
+    else:
+        layout = [[ img ], [ info_panel ]]
 
     window = sg.Window('', layout,
-        background_color='black',
         return_keyboard_events=True,
         location=(0,0),
         size=sg.Window.get_screen_size(),
         keep_on_top=True,
-        modal=True
+        modal=True,
+        finalize=True
     )
+    window.set_cursor('center_ptr')
+    window['frame'].widget.bind("<Motion>", drag_handler)
 
     max_wait_millis = 1000
     max_wait_delta = timedelta(milliseconds=max_wait_millis)
@@ -325,7 +353,6 @@ def gui_display_images(queue, flags):
                 millisec_wait = wait_delta.seconds * 1000 + wait_delta.microseconds / 1000 
 
             event, values = window.read(timeout=millisec_wait)
-            #print(img.get_size())
         
             if event == sg.WINDOW_CLOSED:
                 flags.exiting=True
@@ -336,9 +363,23 @@ def gui_display_images(queue, flags):
                 break
 
         window['frame'].update(data=tk_frame)
+        window['time'].update(value=ftime.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z'))
+        window['pos'].update(value="Mouse {},{}".format(pos.x,pos.y))
+
         queue.task_done()
 
     window.close()
+
+class Pos:
+    def __init__(self):
+        self.x = 0
+        self.y = 0
+
+pos = Pos()
+
+def drag_handler(event):
+    pos.x = event.x
+    pos.y = event.y
 
 def main():
     flags = Flags()
