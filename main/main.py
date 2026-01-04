@@ -16,7 +16,7 @@ import jtime
 
 # Current difference between UT1 and UTC (UT1-UTC).
 # https://www.nist.gov/pml/time-and-frequency-division/time-realization/leap-seconds
-UT1_UTC_DIFF_SECS=0.0614  # 2025-7-28
+UT1_UTC_DIFF_SECS=0.0939  # 2025-10-31
 
 # RGBA - red, green, blue & alpha.
 IMAGE_CHANNELS=4
@@ -33,16 +33,13 @@ else:
     IMAGE_WIDTH=width
 
 # Period between each image/frame
-# FRAME_PERIOD_SECS=1.0
-FRAME_PERIOD_SECS=0.25
+FRAME_PERIOD_SECS=0.25  # 4 frames per second
 
 # The number of images/frames generated in one pass.
 # Processing of intermediate for a satellite is skipped if both the first and last are not in view.
 # So the larger the number, the more efficient, but the greater danger of sats that should be in view
 # getting missed out.  We can assume that sats take at least 5 mins to cross the sky.
-# IMAGE_FRAMES=5*60
-# IMAGE_FRAMES=60
-IMAGE_FRAMES=4*15
+IMAGE_FRAMES=4*15  # 15 seconds at 4 FPS.
 
 class Flags:
     def __init__(self):
@@ -77,10 +74,12 @@ def create_images(queue, flags):
 
         jtimes_event = jTimeCalculator.calc_jtimes(start_time)
         time = start_time
-        frames = projectionsGenerator.generate_projections(jtimes_event)
-        for frame in frames:
+        frames, infos = projectionsGenerator.generate_projections(jtimes_event)
+        for i_frame in range(n_jtimes):
             time += frame_delta
-            queue.put((time, frame,))
+            frame = frames[i_frame]
+            info = infos[i_frame]
+            queue.put((time, frame, info, tle_array,))
 
         start_time += n_jtimes_seconds
 
@@ -227,18 +226,24 @@ class _ProjectionsGenerator:
 
         mf = cl.mem_flags
         self.device_image_buf = cl.create_image(self.opencl.ctx, mf.WRITE_ONLY | mf.HOST_READ_ONLY, format,
-                                          shape=(IMAGE_WIDTH, IMAGE_HEIGHT, IMAGE_FRAMES))
+                                                shape=(IMAGE_WIDTH, IMAGE_HEIGHT, IMAGE_FRAMES))
 
-        # I can't make any sense of how the fill color works.
+        dummy_output_info_array = np.empty([IMAGE_FRAMES, IMAGE_HEIGHT, IMAGE_WIDTH], cl.cltypes.uint)
+        self.info_buf_size=dummy_output_info_array.nbytes
+        self.device_info_buf = cl.Buffer(self.opencl.ctx, mf.WRITE_ONLY | mf.HOST_READ_ONLY, size=self.info_buf_size)
+
+        # I can't make any sense of how the fill color works, but all 0's gives black.
         red = 0
         green = 0
         blue = 0
         alpha = 0
         self.fill_colour = np.array([red, green, blue, alpha], dtype=cl.cltypes.uint) 
 
+        self.info_fill_pattern = cl.cltypes.uint(0)
+
     def generate_projections(self, jtimes_event):
 
-        fill_event = cl.enqueue_fill_image(
+        fill_image_event = cl.enqueue_fill_image(
             self.opencl.queue,
             self.device_image_buf,
             self.fill_colour,
@@ -246,7 +251,15 @@ class _ProjectionsGenerator:
             region=(IMAGE_WIDTH, IMAGE_HEIGHT, IMAGE_FRAMES)
         )
         
-        self.kernel.set_scalar_arg_dtypes([cl.cltypes.int, cl.cltypes.int, cl.cltypes.int, None, None, None])
+        fill_info_event = cl.enqueue_fill_buffer(
+            self.opencl.queue,
+            self.device_info_buf,
+            self.info_fill_pattern,
+            offset=0,
+            size=self.info_buf_size
+        )
+
+        self.kernel.set_scalar_arg_dtypes([cl.cltypes.int, cl.cltypes.int, cl.cltypes.int, None, None, None, None])
 
         self.kernel.set_arg(0, cl.cltypes.int(IMAGE_WIDTH))
         self.kernel.set_arg(1, cl.cltypes.int(IMAGE_HEIGHT))
@@ -255,13 +268,14 @@ class _ProjectionsGenerator:
         self.kernel.set_arg(3, self.jtime_buf)
         self.kernel.set_arg(4, self.satrec_buf)
         self.kernel.set_arg(5, self.device_image_buf)
+        self.kernel.set_arg(6, self.device_info_buf)
 
         # Each work item is for a satrec and gets the current set of jtimes.
         projections_event = cl.enqueue_nd_range_kernel(self.opencl.queue, self.kernel, (self.n_tle,), None,
-                                                        wait_for=[jtimes_event])#,fill_event])
+                                                        wait_for=[jtimes_event,fill_image_event,fill_info_event])
         
         # Copy the result from the device to the host
-        (image_array,map_event,row_pitch,slice_pitch) = cl.enqueue_map_image(
+        (image_array,image_map_event,row_pitch,slice_pitch) = cl.enqueue_map_image(
             self.opencl.queue,
             self.device_image_buf,
             cl.map_flags.READ,
@@ -269,16 +283,30 @@ class _ProjectionsGenerator:
             region=(IMAGE_WIDTH, IMAGE_HEIGHT, IMAGE_FRAMES),
             shape=(IMAGE_FRAMES, IMAGE_HEIGHT, IMAGE_WIDTH),
             dtype=cl.cltypes.uint,
+            is_blocking=False,
             wait_for=[projections_event]
         )
-        map_event.wait()
+    
+        (info_array,info_map_event) = cl.enqueue_map_buffer(
+            self.opencl.queue,
+            self.device_info_buf,
+            cl.map_flags.READ,
+            offset=0,
+            shape=(IMAGE_FRAMES, IMAGE_HEIGHT, IMAGE_WIDTH),
+            dtype=cl.cltypes.uint,
+            is_blocking=False,
+            wait_for=[projections_event]
+        )
+
+        image_map_event.wait()
+        info_map_event.wait()
 
         # _stats('calc_jtimes', jtimes_event)
         # _stats('fill', fill_event)
         # _stats('generate_projections', projections_event)
         # _stats('copy_image', map_event)
         self.opencl.queue.finish()
-        return image_array
+        return (image_array, info_array,)
 
 # def _stats(event_name, event):
 #     print(event_name)
@@ -304,13 +332,18 @@ def gui_display_images(queue, flags):
         key='time',
         expand_x=True
     )
-    pos_txt = sg.Text(
-        key='pos',
+    # pos_txt = sg.Text(
+    #     key='pos',
+    #     expand_x=True
+    # )
+    sat_idx_txt = sg.Text(
+        key='satidx',
         expand_x=True
     )
     info_panel = sg.Column([
             [time_txt],
-            [pos_txt],
+            # [pos_txt],
+            [sat_idx_txt],
             [sg.VPush()]
         ],
         expand_x=True,
@@ -326,19 +359,27 @@ def gui_display_images(queue, flags):
         return_keyboard_events=True,
         location=(0,0),
         size=sg.Window.get_screen_size(),
-        keep_on_top=True,
-        modal=True,
+        # keep_on_top=True,
+        # modal=True,
         finalize=True
     )
     window.set_cursor('center_ptr')
-    window['frame'].widget.bind("<Motion>", drag_handler)
+    # window['frame'].widget.bind("<Motion>", drag_handler)
+    window['frame'].widget.bind("<Button-1>", click_handler)
 
     max_wait_millis = 1000
     max_wait_delta = timedelta(milliseconds=max_wait_millis)
 
+    # frame_save_number = 1
     while not flags.exiting:
-        ftime, frame = queue.get()
-        tk_frame = ImageTk.PhotoImage(image=Image.fromarray(frame))
+        ftime, frame, info, tle_array = queue.get()
+
+        image = Image.fromarray(frame)
+        # if frame_save_number <= 60:
+        #     # ffmpeg -framerate 4 -i frame-%d.png sample-frames.gif
+        #     image.save('frame-' + str(frame_save_number) + '.png', format='PNG')
+        #     frame_save_number += 1
+        tk_frame = ImageTk.PhotoImage(image=image)
 
         waiting_for_frame_time=True
         while waiting_for_frame_time:
@@ -364,7 +405,26 @@ def gui_display_images(queue, flags):
 
         window['frame'].update(data=tk_frame)
         window['time'].update(value=ftime.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z'))
-        window['pos'].update(value="Mouse {},{}".format(pos.x,pos.y))
+        # window['pos'].update(value="Mouse {},{}".format(pos.x,pos.y))
+
+        if pos.clicked:
+            found,y,x = search_for_nonzero_near_click(info, pos.y, pos.x, 30)
+            # print('clicked', found, y, x)
+            # sat_idx = info[pos.y, pos.x]
+            # if sat_idx == 0:
+            if not found:
+                window['satidx'].update('')
+            else:
+                sat_idx = info[y, x]
+                sat_num = tle_array[sat_idx - 1]['satnum']
+                num = ''
+                for c in sat_num:
+                    if c < 1:
+                        break
+                    num += chr(c)
+                window['satidx'].update(value="NORAD Id: {}".format(num))
+                # print(num)
+            pos.clicked = False
 
         queue.task_done()
 
@@ -374,12 +434,44 @@ class Pos:
     def __init__(self):
         self.x = 0
         self.y = 0
+        self.clicked = False
 
 pos = Pos()
 
-def drag_handler(event):
+# def drag_handler(event):
+#     pos.x = event.x
+#     pos.y = event.y
+
+def click_handler(event):
+    # print('clicked')
     pos.x = event.x
     pos.y = event.y
+    pos.clicked = True
+
+def search_for_nonzero_near_click(info, click_y, click_x, max_pixels):
+
+    if info[click_y, click_x] != 0:
+        return (True, click_y, click_x,)
+
+    max_y, max_x = info.shape
+    for pixs_from_click in range(1, max_pixels):
+        from_y = max(click_y - pixs_from_click, 0)
+        upto_y = min(click_y + pixs_from_click, max_y)
+        from_x = max(click_x - pixs_from_click, 0)
+        upto_x = min(click_x + pixs_from_click, max_x)
+
+        for y in range(from_y, upto_y):
+            if info[y, from_x] != 0:
+                return (True, y, from_x,)
+            if info[y, upto_x] != 0:
+                return (True, y, upto_x,)
+        for x in range(from_x + 1, upto_x - 1):
+            if info[from_y, x] != 0:
+                return (True, from_y, x,)
+            if info[upto_y, x] != 0:
+                return (True, upto_y, x)
+            
+    return (False,None,None,)
 
 def main():
     flags = Flags()

@@ -8,19 +8,14 @@ Each satellite is currently just a single pixel.  So you probably need to zoom i
 
 ![Sample frames](./sample-frames.gif) 
 
-But there is just so much left to do:
+But there is just so much left to do.  For example (no particular order):
 
-* Workout why the line of geo-stationary satellites are appearing near the top, when south is supposed to be at the bottom :-)
-* Include the sun, moon and stars.
 * Do a gradient fill to make the projection look domed.
 * Label or colour objects by type, size, visibility or altitude. 
-* Add text to explain what can be seen.
-* Fetch SATCAT data and use Radar Cross Section (RCS) to distinguish small and large objects. https://celestrak.org/satcat/records.php?GROUP=visual&FORMAT=CSV&ONORBIT=true
-* Restructure the code into 4 distinct programs:
-  * Fetch the satellite data, and update it periodically (obeying the frequency rules). Needs to move complete data into position atomically for use by the next stage. Currently this is a bash script which sort of works.
-  * Generate a cache of images for display in the up-coming minutes.
-  * Display the images from the cache as they become current.  A separate program so that multiple instances can use the same cache.
-  * A program to clear used images from the cache.
+* Display details of the selected satellite.
+* Restructure the code.
+* Fetch SATCAT data and use Radar Cross Section (RCS) to distinguish small and large objects and where it was launched from. https://celestrak.org/satcat/records.php?GROUP=visual&FORMAT=CSV&ONORBIT=true & https://celestrak.org/satcat/satcat-format.php
+* Include the sun, moon and stars (perhaps).
 
 ## Licenses
 
@@ -106,6 +101,8 @@ Now you should be able to run the unit tests with this command:
 
     make test
 
+There will probably be some warnings that can be ignored.  As this is very much at the proof-of-concept stage - not everything has a test yet.
+
 #### Running
 
 Fetch Celestrak TLE data with this command:
@@ -115,4 +112,6 @@ Fetch Celestrak TLE data with this command:
 Start the generation and display of skyscape images:
 
     make run
+
+Click on or near a satellite to see its NORAD id.  Use 'q' or 'Esc' to terminate the program.
 
