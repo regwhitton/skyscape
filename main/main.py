@@ -2,7 +2,7 @@ import glob
 import pyopencl as cl
 import numpy as np
 from datetime import datetime, timezone, timedelta
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw
 import os
 import shutil
 import queue
@@ -332,18 +332,23 @@ def gui_display_images(queue, flags):
         key='time',
         expand_x=True
     )
-    # pos_txt = sg.Text(
-    #     key='pos',
-    #     expand_x=True
-    # )
+    pos_txt = sg.Text(
+        key='pos',
+        expand_x=True
+    )
+    tracked_pos_txt = sg.Text(
+        key='tracked_pos',
+        expand_x=True
+    )
     sat_idx_txt = sg.Text(
         key='satidx',
         expand_x=True
     )
     info_panel = sg.Column([
             [time_txt],
-            # [pos_txt],
+            [pos_txt],
             [sat_idx_txt],
+            [tracked_pos_txt],
             [sg.VPush()]
         ],
         expand_x=True,
@@ -364,21 +369,18 @@ def gui_display_images(queue, flags):
         finalize=True
     )
     window.set_cursor('center_ptr')
-    # window['frame'].widget.bind("<Motion>", drag_handler)
+    window['frame'].widget.bind("<Motion>", drag_handler)
     window['frame'].widget.bind("<Button-1>", click_handler)
 
     max_wait_millis = 1000
     max_wait_delta = timedelta(milliseconds=max_wait_millis)
 
-    # frame_save_number = 1
+    tracked_sat_found = False
+
     while not flags.exiting:
         ftime, frame, info, tle_array = queue.get()
 
         image = Image.fromarray(frame)
-        # if frame_save_number <= 60:
-        #     # ffmpeg -framerate 4 -i frame-%d.png sample-frames.gif
-        #     image.save('frame-' + str(frame_save_number) + '.png', format='PNG')
-        #     frame_save_number += 1
         tk_frame = ImageTk.PhotoImage(image=image)
 
         waiting_for_frame_time=True
@@ -405,15 +407,20 @@ def gui_display_images(queue, flags):
 
         window['frame'].update(data=tk_frame)
         window['time'].update(value=ftime.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z'))
-        # window['pos'].update(value="Mouse {},{}".format(pos.x,pos.y))
+        window['pos'].update(value="Mouse {},{}".format(pos.mx,pos.my))
+        
+        if tracked_sat_found:
+            tracked_sat_found,tracked_sat_y,tracked_sat_x = search_for_sat(sat_idx, info, tracked_sat_y, tracked_sat_x, 150)
+            if tracked_sat_found:
+                window['tracked_pos'].update(value="Sat pos {},{}".format(tracked_sat_x,tracked_sat_y))
+            else:
+                window['tracked_pos'].update(value="")
 
         if pos.clicked:
             found,y,x = search_for_nonzero_near_click(info, pos.y, pos.x, 30)
-            # print('clicked', found, y, x)
-            # sat_idx = info[pos.y, pos.x]
-            # if sat_idx == 0:
             if not found:
                 window['satidx'].update('')
+                tracked_sat_found = False
             else:
                 sat_idx = info[y, x]
                 sat_num = tle_array[sat_idx - 1]['satnum']
@@ -423,7 +430,9 @@ def gui_display_images(queue, flags):
                         break
                     num += chr(c)
                 window['satidx'].update(value="NORAD Id: {}".format(num))
-                # print(num)
+                tracked_sat_found = True
+                tracked_sat_x = x
+                tracked_sat_y = y
             pos.clicked = False
 
         queue.task_done()
@@ -435,41 +444,55 @@ class Pos:
         self.x = 0
         self.y = 0
         self.clicked = False
+        self.mx = 0
+        self.my = 0
 
 pos = Pos()
 
-# def drag_handler(event):
-#     pos.x = event.x
-#     pos.y = event.y
+def drag_handler(event):
+    pos.mx = event.x
+    pos.my = event.y
 
 def click_handler(event):
-    # print('clicked')
     pos.x = event.x
     pos.y = event.y
     pos.clicked = True
 
-def search_for_nonzero_near_click(info, click_y, click_x, max_pixels):
+def search_for_nonzero_near_click(info, click_y, click_x, max_search_distance):
+    matcher = lambda y, x: info[y, x] != 0
+    height, width = info.shape
+    return search_box(matcher, click_y, click_x, height, width, max_search_distance)
 
-    if info[click_y, click_x] != 0:
-        return (True, click_y, click_x,)
+def search_for_sat(sat_idx, info, last_known_y, last_known_x, max_search_distance):
+    matcher = lambda y, x: info[y, x] == sat_idx
+    height, width = info.shape
+    return search_box(matcher, last_known_y, last_known_x, height, width, max_search_distance)
 
-    max_y, max_x = info.shape
-    for pixs_from_click in range(1, max_pixels):
-        from_y = max(click_y - pixs_from_click, 0)
-        upto_y = min(click_y + pixs_from_click, max_y)
-        from_x = max(click_x - pixs_from_click, 0)
-        upto_x = min(click_x + pixs_from_click, max_x)
+def search_box(matcher, start_y, start_x, height, width, max_search_distance):
+    if matcher(start_y, start_x):
+        return (True, start_y, start_x,)
 
-        for y in range(from_y, upto_y):
-            if info[y, from_x] != 0:
-                return (True, y, from_x,)
-            if info[y, upto_x] != 0:
-                return (True, y, upto_x,)
-        for x in range(from_x + 1, upto_x - 1):
-            if info[from_y, x] != 0:
-                return (True, from_y, x,)
-            if info[upto_y, x] != 0:
-                return (True, upto_y, x)
+    # Search increasing larger pixel boxes around point.
+    for dist_from_click in range(1, max_search_distance + 1):
+        top_y = max(start_y - dist_from_click, 0)
+        bot_y = min(start_y + dist_from_click, height - 1)
+        left_x = max(start_x - dist_from_click, 0)
+        right_x = min(start_x + dist_from_click, width - 1)
+
+        # Search left and right sides of pixel box.
+        for y in range(top_y, bot_y + 1):
+            if matcher(y, left_x):
+                return (True, y, left_x,)
+            if matcher(y, right_x):
+                return (True, y, right_x,)
+        
+        # Search top and bottom sides of pixel box.
+        # No need to do first and last pixels again.
+        for x in range(left_x + 1, right_x):
+            if matcher(top_y, x):
+                return (True, top_y, x,)
+            if matcher(bot_y, x):
+                return (True, bot_y, x,)
             
     return (False,None,None,)
 

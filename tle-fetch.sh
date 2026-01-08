@@ -4,6 +4,9 @@ feed_cache_dir="./caches/tle-feeds"
 tle_cache_dir="./caches/tle"
 tmp_tle_dir="${tle_cache_dir}.tmp"
 
+GPZ_TAG="Geostationary orbit"
+GPZ_PLUS_TAG="Graveyard orbit"
+
 queries="
 GROUP   active
 GROUP   last-30-days        Launched in last 30 days
@@ -22,8 +25,8 @@ GROUP   nnss                Navigation
 GROUP   noaa                Weather
 GROUP   orbcomm
 GROUP   satnogs
-SPECIAL gpz                 GEO stationary orbit
-SPECIAL gpz-plus            Graveyard orbit
+SPECIAL gpz                 $GPZ_TAG
+SPECIAL gpz-plus            $GPZ_PLUS_TAG
 SPECIAL decaying            Potential decay
 "
 
@@ -123,10 +126,14 @@ do
       fi
     fi
 
-    # Just add tags from later feeds.
+    # Don't re-add duplicate tags
     if [[ ! -z "$tag" ]] && ! grep -qFx "$tag" "$desc_file"
     then
-      echo "$tag" >> "$desc_file"
+      # Also don't add the gpz-plus tag if the gpz tag is already there.
+      if [[ "$tag" != "$GPZ_PLUS_TAG" ]] || ! grep -qFx "$GPZ_TAG" "$desc_file"
+      then
+        echo "$tag" >> "$desc_file"
+      fi
     fi
   done
 done
