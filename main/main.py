@@ -381,6 +381,10 @@ def gui_display_images(queue, flags):
         ftime, frame, info, tle_array = queue.get()
 
         image = Image.fromarray(frame)
+        if tracked_sat_found:
+            tracked_sat_found,tracked_sat_y,tracked_sat_x = search_for_sat(sat_idx, info, tracked_sat_y, tracked_sat_x, 150)
+            if tracked_sat_found:
+                ImageDraw.Draw(image).circle((tracked_sat_x,tracked_sat_y,), 10, outline=80)
         tk_frame = ImageTk.PhotoImage(image=image)
 
         waiting_for_frame_time=True
@@ -405,17 +409,15 @@ def gui_display_images(queue, flags):
                 flags.exiting=True
                 break
 
+        if tracked_sat_found:
+            window['tracked_pos'].update(value="Sat pos {},{}".format(tracked_sat_x,tracked_sat_y))
+        else:
+            window['tracked_pos'].update(value="")
+
         window['frame'].update(data=tk_frame)
         window['time'].update(value=ftime.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z'))
         window['pos'].update(value="Mouse {},{}".format(pos.mx,pos.my))
         
-        if tracked_sat_found:
-            tracked_sat_found,tracked_sat_y,tracked_sat_x = search_for_sat(sat_idx, info, tracked_sat_y, tracked_sat_x, 150)
-            if tracked_sat_found:
-                window['tracked_pos'].update(value="Sat pos {},{}".format(tracked_sat_x,tracked_sat_y))
-            else:
-                window['tracked_pos'].update(value="")
-
         if pos.clicked:
             found,y,x = search_for_nonzero_near_click(info, pos.y, pos.x, 30)
             if not found:
