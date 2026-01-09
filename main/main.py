@@ -54,7 +54,7 @@ def create_images(queue, flags):
 
     # TODO: loop back to here at intervals. Perhaps do every loop but skip if inode not changed.
     # Perhaps just update tle records that have changed.
-    tle_array = _read_tle_files(opencl)
+    tle_array, sat_info = _read_tle_files(opencl)
 
     satrec_buf = _calc_satrecs(opencl, tle_array, satrec_size)
     n_tle = len(tle_array)
@@ -79,7 +79,7 @@ def create_images(queue, flags):
             time += frame_delta
             frame = frames[i_frame]
             info = infos[i_frame]
-            queue.put((time, frame, info, tle_array,))
+            queue.put((time, frame, info, sat_info,))
 
         start_time += n_jtimes_seconds
 
@@ -110,7 +110,26 @@ def _read_tle_files(opencl):
         for key, value in tle_dict.items():
             tle_array[i][key] = value
 
-    return tle_array
+    # return tle_array
+
+    sat_info = []
+    for i in range(0, len(tle_array)):
+        sat_num = tle_array[i]['satnum']
+        norad_id = ''
+        for c in sat_num:
+            if c < 1:
+                break
+            norad_id += chr(c)
+
+        desc_path = "./caches/tle/{}.desc".format(norad_id)
+        with open(desc_path, 'r') as file:
+            name = file.readline()
+            tags = ''
+            for t in file.readlines():
+                tags += t
+        sat_info.append({'norad_id':norad_id,'name':name,'tags':tags})
+
+    return (tle_array, sat_info,)
 
 def _find_satrec_size(opencl):
     """ We don't know size of satrec struct for buffer, so we use opencl kernel to get it."""
@@ -340,15 +359,25 @@ def gui_display_images(queue, flags):
         key='tracked_pos',
         expand_x=True
     )
-    sat_idx_txt = sg.Text(
-        key='satidx',
+    norad_id_txt = sg.Text(
+        key='norad_id',
+        expand_x=True
+    )
+    name_txt = sg.Text(
+        key='name',
+        expand_x=True
+    )
+    tags_txt = sg.Text(
+        key='tags',
         expand_x=True
     )
     info_panel = sg.Column([
             [time_txt],
             [pos_txt],
-            [sat_idx_txt],
             [tracked_pos_txt],
+            [norad_id_txt],
+            [name_txt],
+            [tags_txt],
             [sg.VPush()]
         ],
         expand_x=True,
@@ -378,7 +407,7 @@ def gui_display_images(queue, flags):
     tracked_sat_found = False
 
     while not flags.exiting:
-        ftime, frame, info, tle_array = queue.get()
+        ftime, frame, info, sat_info = queue.get()
 
         image = Image.fromarray(frame)
         if tracked_sat_found:
@@ -409,29 +438,27 @@ def gui_display_images(queue, flags):
                 flags.exiting=True
                 break
 
-        if tracked_sat_found:
-            window['tracked_pos'].update(value="Sat pos {},{}".format(tracked_sat_x,tracked_sat_y))
-        else:
-            window['tracked_pos'].update(value="")
+        # if tracked_sat_found:
+        #     window['tracked_pos'].update(value="Sat pos {},{}".format(tracked_sat_x,tracked_sat_y))
+        # else:
+        #     window['tracked_pos'].update(value="")
 
         window['frame'].update(data=tk_frame)
         window['time'].update(value=ftime.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z'))
-        window['pos'].update(value="Mouse {},{}".format(pos.mx,pos.my))
+        # window['pos'].update(value="Mouse {},{}".format(pos.mx,pos.my))
         
         if pos.clicked:
             found,y,x = search_for_nonzero_near_click(info, pos.y, pos.x, 30)
             if not found:
-                window['satidx'].update('')
+                window['norad_id'].update('')
+                window['name'].update('')
+                window['tags'].update('')
                 tracked_sat_found = False
             else:
                 sat_idx = info[y, x]
-                sat_num = tle_array[sat_idx - 1]['satnum']
-                num = ''
-                for c in sat_num:
-                    if c < 1:
-                        break
-                    num += chr(c)
-                window['satidx'].update(value="NORAD Id: {}".format(num))
+                window['norad_id'].update(value="id: {}".format(sat_info[sat_idx - 1]['norad_id']))
+                window['name'].update(value="Name: {}".format(sat_info[sat_idx - 1]['name']))
+                window['tags'].update(value=sat_info[sat_idx - 1]['tags'])
                 tracked_sat_found = True
                 tracked_sat_x = x
                 tracked_sat_y = y
