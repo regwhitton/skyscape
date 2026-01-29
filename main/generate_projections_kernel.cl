@@ -98,6 +98,7 @@ bool calc_razel(
     // double latgc, latgd, lon, hellp;
     // ecef2ll(recef, &latgc, &latgd, &lon, &hellp);
  
+    //double site_latgd = 53.7965 *pi/180.0, site_lon = -1.54785 *pi/180.0, site_alt = 0.096; // Cloth Hall Leeds
     double site_latgd = 51.477928 *pi/180.0, site_lon = -0.001545 *pi/180.0, site_alt = 0.068; // Royal Greenwich Observatory
     //double site_latgd = 53.966 *pi/180.0, site_lon = -1.074 *pi/180.0, site_alt = 0.013; // York
 

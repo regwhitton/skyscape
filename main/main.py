@@ -341,6 +341,7 @@ def gui_display_images(queue, flags):
     # Might need to do read for gui to render.
     sg.theme('Black')
     sg.set_options(element_padding=(0,0),margins=(0,0))
+    font=("Calibri", 16)
 
     img = sg.Image(
         key='frame',
@@ -349,26 +350,32 @@ def gui_display_images(queue, flags):
     )
     time_txt = sg.Text(
         key='time',
+        font=font,
         expand_x=True
     )
     pos_txt = sg.Text(
         key='pos',
+        font=font,
         expand_x=True
     )
     tracked_pos_txt = sg.Text(
         key='tracked_pos',
+        font=font,
         expand_x=True
     )
     norad_id_txt = sg.Text(
         key='norad_id',
+        font=font,
         expand_x=True
     )
     name_txt = sg.Text(
         key='name',
+        font=font,
         expand_x=True
     )
     tags_txt = sg.Text(
         key='tags',
+        font=font,
         expand_x=True
     )
     info_panel = sg.Column([
@@ -384,10 +391,11 @@ def gui_display_images(queue, flags):
         expand_y=True,
         pad=(10,2)
     )
+    spacer = sg.Sizer(20, 20)
     if LANDSCAPE:
-        layout = [[ img, info_panel ]]
+        layout = [[ img, spacer, info_panel ]]
     else:
-        layout = [[ img ], [ info_panel ]]
+        layout = [[ img ], [spacer], [ info_panel ]]
 
     window = sg.Window('', layout,
         return_keyboard_events=True,
@@ -456,7 +464,7 @@ def gui_display_images(queue, flags):
                 tracked_sat_found = False
             else:
                 sat_idx = info[y, x]
-                window['norad_id'].update(value="id: {}".format(sat_info[sat_idx - 1]['norad_id']))
+                window['norad_id'].update(value="NORAD id: {}".format(sat_info[sat_idx - 1]['norad_id']))
                 window['name'].update(value="Name: {}".format(sat_info[sat_idx - 1]['name']))
                 window['tags'].update(value=sat_info[sat_idx - 1]['tags'])
                 tracked_sat_found = True
