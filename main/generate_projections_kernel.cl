@@ -7,6 +7,7 @@
 #include "celestrak/mathtimelib/MathTimeLib.cl"
 #include "celestrak/astrolib/AstroLib.cl"
 #include "celestrak/sgp4/SGP4.cl"
+#include "calc_ecef.cl"
 
 bool calc_razel(elsetrec *satrec, __global const jtime *jt, double *range, double *azimuth, double *elevation);
 void project(__write_only image3d_t image, int frame, double range, double azimuth, double elevation, int image_width, int image_height, char* satnum, size_t satrec_index, __global uint *info);
@@ -61,43 +62,14 @@ bool calc_razel(
     double *elevation
 )
 {
-    double time_since_sat_epoch = (jt->jdut1 - satrec->jdsatepoch) * 1440.0 + (jt->jdut1Frac - satrec->jdsatepochF) * 1440.0;
+    const jtime jt2 = *jt;
 
-    double rteme[3], vteme[3], ateme[3];
-    sgp4(satrec, time_since_sat_epoch, rteme, vteme);
+    double recef[3], vecef[3], aecef[3];
 
-    if (satrec->error != 0) {
+    if (!calc_ecef(satrec, &jt2, recef, vecef, aecef)) {
         return false;
     }
 
-    // Converting TEME to latitude and longitude.
-    // Using method suggested on https://celestrak.org/publications/AIAA/2006-6753/faq.php
-
-    // Calculate teme acceleration vector
-    // Taken from sgp4/cpp/testsgp4/TestSGP4mod.cpp in ZIP at https://celestrak.org/publications/AIAA/2006-6753/
-    double magnitude_of_rteme = sqrt(pow(rteme[0],2) + pow(rteme[1],2) + pow(rteme[2],2));
-    for (int i = 0; i < 3; i++) {
-        // 9.81 m/s^2 is acceleration due to gravity
-        ateme[i] = 9.81 * (-1 * rteme[i] / magnitude_of_rteme);
-    }
-
-    // Rotate from the TEME to ECEF
-
-    double conv = pi / (180.0*3600.0);
-    int eqeterms = 2;  // terms for equation of the equinoxes
-    double lod = 0.0015563; // sec
-    // Can we get these from https://eop2-external.jpl.nasa.gov/ ?
-    // Tool to do it? https://docs.astropy.org/en/stable/utils/iers.html
-    double xp   = -0.140682 * conv;  // polar motion values in rad from arcsec
-    double yp   =  0.333309 * conv;
-
-    double recef[3], vecef[3], aecef[3];
-    teme_ecef(rteme, vteme, ateme, eTo, recef, vecef, aecef, jt->ttt, jt->jdut1 + jt->jdut1Frac, lod, xp, yp, eqeterms);
-
-    // Next use ecef2llb to convert to lon/lat for testing.
-    // double latgc, latgd, lon, hellp;
-    // ecef2ll(recef, &latgc, &latgd, &lon, &hellp);
- 
     //double site_latgd = 53.7965 *pi/180.0, site_lon = -1.54785 *pi/180.0, site_alt = 0.096; // Cloth Hall Leeds
     double site_latgd = 51.477928 *pi/180.0, site_lon = -0.001545 *pi/180.0, site_alt = 0.068; // Royal Greenwich Observatory
     //double site_latgd = 53.966 *pi/180.0, site_lon = -1.074 *pi/180.0, site_alt = 0.013; // York

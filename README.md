@@ -10,11 +10,11 @@ Each satellite is currently just a single pixel.  So you probably need to zoom i
 
 But there is just so much left to do.  For example (no particular order):
 
+* Work out why everything is always monochrome.
+* May be switch to another source for TLE records.
+* Completely restructure the code and retrofit unit tests.
 * Do a gradient fill to make the projection look domed.
 * Label or colour objects by type, size, visibility or altitude. 
-* Display details of the selected satellite.
-* Restructure the code.
-* Fetch SATCAT data and use Radar Cross Section (RCS) to distinguish small and large objects and where it was launched from. https://celestrak.org/satcat/records.php?GROUP=visual&FORMAT=CSV&ONORBIT=true & https://celestrak.org/satcat/satcat-format.php
 * Include the sun, moon and stars (perhaps).
 
 ## Licenses

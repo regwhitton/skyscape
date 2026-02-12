@@ -16,21 +16,23 @@ import jtime
 
 # Current difference between UT1 and UTC (UT1-UTC).
 # https://www.nist.gov/pml/time-and-frequency-division/time-realization/leap-seconds
-UT1_UTC_DIFF_SECS=0.0939  # 2025-10-31
+# Also: https://www.iers.org/IERS/EN/DataProducts/tools/eop_of_today/eop_of_today_tool.html
+#UT1_UTC_DIFF_SECS=0.0939  # 2025-10-31
+UT1_UTC_DIFF_SECS=0.07024  # 2026-02-05
 
 # RGBA - red, green, blue & alpha.
 IMAGE_CHANNELS=4
 
 # The size of each image
 # Should get actual canvas size once gui rendered.
-(width, height) = sg.Window.get_screen_size()
-LANDSCAPE=width > height
+(SCREEN_WIDTH, SCREEN_HEIGHT) = sg.Window.get_screen_size()
+LANDSCAPE=SCREEN_WIDTH > SCREEN_HEIGHT
 if LANDSCAPE:
-    IMAGE_HEIGHT=height
-    IMAGE_WIDTH=height
+    IMAGE_HEIGHT=SCREEN_HEIGHT
+    IMAGE_WIDTH=SCREEN_HEIGHT
 else:
-    IMAGE_HEIGHT=width
-    IMAGE_WIDTH=width
+    IMAGE_HEIGHT=SCREEN_WIDTH
+    IMAGE_WIDTH=SCREEN_WIDTH
 
 # Period between each image/frame
 FRAME_PERIOD_SECS=0.25  # 4 frames per second
@@ -44,9 +46,11 @@ IMAGE_FRAMES=4*15  # 15 seconds at 4 FPS.
 class Flags:
     def __init__(self):
         self.exiting = False
+        # So not a flag - just shared between threads.
+        self.satrec_buf = None
 
-def create_images(queue, flags):
-    opencl = OpenCl()
+def create_images(queue, flags, opencl_ctx):
+    opencl = OpenCl(opencl_ctx)
     satrec_size = _find_satrec_size(opencl)
 
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -57,6 +61,7 @@ def create_images(queue, flags):
     tle_array, sat_info = _read_tle_files(opencl)
 
     satrec_buf = _calc_satrecs(opencl, tle_array, satrec_size)
+    flags.satrec_buf = satrec_buf
     n_tle = len(tle_array)
 
     n_jtimes = IMAGE_FRAMES
@@ -84,11 +89,11 @@ def create_images(queue, flags):
         start_time += n_jtimes_seconds
 
 class OpenCl:
-    def __init__(self):
-        opencl_ctx = cl.create_some_context(interactive=False)
+    def __init__(self, opencl_ctx):
         self.ctx = opencl_ctx
         self.device = opencl_ctx.devices[0]
-        self.queue = cl.CommandQueue(opencl_ctx, properties=cl.command_queue_properties.PROFILING_ENABLE)
+        #self.queue = cl.CommandQueue(opencl_ctx, properties=cl.command_queue_properties.PROFILING_ENABLE)
+        self.queue = cl.CommandQueue(opencl_ctx)
 
 def _read_tle_files(opencl):
 
@@ -327,6 +332,72 @@ class _ProjectionsGenerator:
         self.opencl.queue.finish()
         return (image_array, info_array,)
 
+class _LatlongCalculator:
+    def __init__(self, opencl, satrec_buf):
+        self.opencl = opencl
+
+        self.satrec_buf = satrec_buf
+
+        program = cl.Program(
+            opencl.ctx, '#include "calc_latlong_kernel.cl"'
+        ).build(
+            options=' -I main/ -I ' + dt.GENERATED_HEADER_DIR + ' ',
+            cache_dir='caches/opencl_cachedir/'
+        )
+
+        self.kernel = cl.Kernel(program, 'calc_latlong')
+        
+        mf = cl.mem_flags
+        self.output_size = 5
+        dummy_output_array = np.empty([self.output_size], cl.cltypes.double)
+        self.output_buf = cl.Buffer(opencl.ctx, mf.READ_WRITE | mf.HOST_READ_ONLY,
+                                    size=dummy_output_array.nbytes)
+
+    def calculate_latlong(self, time, sat_idx):
+
+        # TODO: check that indexed record has the expected norad id.
+
+        p_year = cl.cltypes.int(time.year)
+        p_month = cl.cltypes.int(time.month)
+        p_day = cl.cltypes.int(time.day)
+        p_hour = cl.cltypes.int(time.hour)
+        p_min = cl.cltypes.int(time.minute)
+        p_sec = cl.cltypes.double(time.second)
+        p_ut1_utc_diff_secs = cl.cltypes.double(UT1_UTC_DIFF_SECS)
+
+        self.kernel.set_scalar_arg_dtypes([
+            cl.cltypes.int, cl.cltypes.int, cl.cltypes.int,
+            cl.cltypes.int, cl.cltypes.int, cl.cltypes.double,
+            cl.cltypes.double, cl.cltypes.long, None, None])
+
+        self.kernel.set_arg(0, p_year)
+        self.kernel.set_arg(1, p_month)
+        self.kernel.set_arg(2, p_day)
+        self.kernel.set_arg(3, p_hour)
+        self.kernel.set_arg(4, p_min)
+        self.kernel.set_arg(5, p_sec)
+        self.kernel.set_arg(6, p_ut1_utc_diff_secs)
+        self.kernel.set_arg(7, sat_idx)
+        self.kernel.set_arg(8, self.satrec_buf)
+        self.kernel.set_arg(9, self.output_buf)
+
+        kernel_event = cl.enqueue_nd_range_kernel(self.opencl.queue, self.kernel, (1,), None)
+        
+        (output_array,map_event) = cl.enqueue_map_buffer(
+            self.opencl.queue,
+            self.output_buf,
+            cl.map_flags.READ,
+            offset=0,
+            shape=(self.output_size,),
+            dtype=cl.cltypes.double,
+            is_blocking=False,
+            wait_for=[kernel_event]
+        )
+
+        map_event.wait()
+        self.opencl.queue.finish()
+        return output_array
+
 # def _stats(event_name, event):
 #     print(event_name)
 #     print("queued  : {}".format(event.profile.queued))
@@ -336,30 +407,43 @@ class _ProjectionsGenerator:
 #     print("complete: {}, {} ns".format(event.profile.complete, event.profile.complete - event.profile.end))
 #     print("total   : {} ns".format(event.profile.complete - event.profile.queued))
 
-def gui_display_images(queue, flags):
-    # Better to create gui first to workout available size.
-    # Might need to do read for gui to render.
+def gui_display_images(queue, flags, opencl_ctx):
+    
+    latlong_calc = None
+    latlong = [np.nan]
+    
     sg.theme('Black')
     sg.set_options(element_padding=(0,0),margins=(0,0))
-    font=("Calibri", 16)
+    if SCREEN_WIDTH == 1024 and SCREEN_HEIGHT == 768:
+        font_size=8
+        title_font_size=30
+        url_font_size=8
+        space_size=20
+    else:
+        font_size=16
+        title_font_size=30
+        url_font_size=20
+        space_size=20
+        
+    font=("Calibri", font_size)
 
     img = sg.Image(
         key='frame',
         size=(IMAGE_HEIGHT,IMAGE_WIDTH,),
         enable_events=True
     )
+    title_txt = sg.Text(
+        'Skyspace',
+        font=("Calibri", title_font_size),
+        expand_x=True
+    )
+    url_txt = sg.Text(
+        'https://github.com/regwhitton/skyscape',
+        font=("Calibri", url_font_size),
+        expand_x=True
+    )
     time_txt = sg.Text(
         key='time',
-        font=font,
-        expand_x=True
-    )
-    pos_txt = sg.Text(
-        key='pos',
-        font=font,
-        expand_x=True
-    )
-    tracked_pos_txt = sg.Text(
-        key='tracked_pos',
         font=font,
         expand_x=True
     )
@@ -373,17 +457,44 @@ def gui_display_images(queue, flags):
         font=font,
         expand_x=True
     )
+    altitude_txt = sg.Text(
+        key='altitude',
+        font=font,
+        expand_x=True
+    )
+    longitude_txt = sg.Text(
+        key='longitude',
+        font=font,
+        expand_x=True
+    )
+    latitude_txt = sg.Text(
+        key='latitude',
+        font=font,
+        expand_x=True
+    )
+    velocity_txt = sg.Text(
+        key='velocity',
+        font=font,
+        expand_x=True
+    )
     tags_txt = sg.Text(
         key='tags',
         font=font,
         expand_x=True
     )
+
     info_panel = sg.Column([
+            [title_txt],
+            [url_txt],
             [time_txt],
-            [pos_txt],
-            [tracked_pos_txt],
+            [sg.Sizer(space_size, space_size)],
             [norad_id_txt],
             [name_txt],
+            [altitude_txt],
+            [longitude_txt],
+            [latitude_txt],
+            [velocity_txt],
+            [sg.Sizer(space_size, space_size)],
             [tags_txt],
             [sg.VPush()]
         ],
@@ -391,7 +502,7 @@ def gui_display_images(queue, flags):
         expand_y=True,
         pad=(10,2)
     )
-    spacer = sg.Sizer(20, 20)
+    spacer = sg.Sizer(space_size, space_size)
     if LANDSCAPE:
         layout = [[ img, spacer, info_panel ]]
     else:
@@ -417,11 +528,15 @@ def gui_display_images(queue, flags):
     while not flags.exiting:
         ftime, frame, info, sat_info = queue.get()
 
+        if latlong_calc == None:
+            latlong_calc = _LatlongCalculator(OpenCl(opencl_ctx), flags.satrec_buf)
+
         image = Image.fromarray(frame)
         if tracked_sat_found:
             tracked_sat_found,tracked_sat_y,tracked_sat_x = search_for_sat(sat_idx, info, tracked_sat_y, tracked_sat_x, 150)
             if tracked_sat_found:
                 ImageDraw.Draw(image).circle((tracked_sat_x,tracked_sat_y,), 10, outline=80)
+                latlong = latlong_calc.calculate_latlong(ftime, sat_idx)
         tk_frame = ImageTk.PhotoImage(image=image)
 
         waiting_for_frame_time=True
@@ -446,14 +561,8 @@ def gui_display_images(queue, flags):
                 flags.exiting=True
                 break
 
-        # if tracked_sat_found:
-        #     window['tracked_pos'].update(value="Sat pos {},{}".format(tracked_sat_x,tracked_sat_y))
-        # else:
-        #     window['tracked_pos'].update(value="")
-
         window['frame'].update(data=tk_frame)
         window['time'].update(value=ftime.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z'))
-        # window['pos'].update(value="Mouse {},{}".format(pos.mx,pos.my))
         
         if pos.clicked:
             found,y,x = search_for_nonzero_near_click(info, pos.y, pos.x, 30)
@@ -462,15 +571,28 @@ def gui_display_images(queue, flags):
                 window['name'].update('')
                 window['tags'].update('')
                 tracked_sat_found = False
+                latlong = [np.nan]
             else:
-                sat_idx = info[y, x]
-                window['norad_id'].update(value="NORAD id: {}".format(sat_info[sat_idx - 1]['norad_id']))
-                window['name'].update(value="Name: {}".format(sat_info[sat_idx - 1]['name']))
-                window['tags'].update(value=sat_info[sat_idx - 1]['tags'])
+                sat_idx = info[y, x] - 1
+                latlong = latlong_calc.calculate_latlong(ftime, sat_idx)
+                window['norad_id'].update(value="NORAD id: {}".format(sat_info[sat_idx]['norad_id']))
+                window['name'].update(value="Name:        {}".format(sat_info[sat_idx]['name']))
+                window['tags'].update(value=sat_info[sat_idx]['tags'])
                 tracked_sat_found = True
                 tracked_sat_x = x
                 tracked_sat_y = y
             pos.clicked = False
+
+        if not np.isnan(latlong[0]):
+            window['altitude'].update(value="Altitude:     {:-3,.0f} km".format(latlong[1]))
+            window['longitude'].update(value="Longitude:  {:-3,.2f}".format(latlong[4]))
+            window['latitude'].update(value="Latitude:     {:-3,.2f}".format(latlong[3]))
+            window['velocity'].update(value="Velocity:      {:-3,.1f} km/s".format(latlong[0]))
+        else:
+            window['altitude'].update("")
+            window['longitude'].update("")
+            window['latitude'].update("")
+            window['velocity'].update("")
 
         queue.task_done()
 
@@ -501,7 +623,7 @@ def search_for_nonzero_near_click(info, click_y, click_x, max_search_distance):
     return search_box(matcher, click_y, click_x, height, width, max_search_distance)
 
 def search_for_sat(sat_idx, info, last_known_y, last_known_x, max_search_distance):
-    matcher = lambda y, x: info[y, x] == sat_idx
+    matcher = lambda y, x: info[y, x] == sat_idx + 1
     height, width = info.shape
     return search_box(matcher, last_known_y, last_known_x, height, width, max_search_distance)
 
@@ -536,9 +658,10 @@ def search_box(matcher, start_y, start_x, height, width, max_search_distance):
 def main():
     flags = Flags()
     q = queue.Queue()
-    create_images_thread = threading.Thread(target=create_images, args=(q, flags,))
+    opencl_ctx = cl.create_some_context(interactive=False)
+    create_images_thread = threading.Thread(target=create_images, args=(q, flags, opencl_ctx,))
     create_images_thread.start()
-    gui_display_images(q, flags)
+    gui_display_images(q, flags, opencl_ctx)
     create_images_thread.join()
 
 if __name__ == "__main__":
