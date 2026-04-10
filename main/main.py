@@ -411,18 +411,17 @@ def gui_display_images(queue, flags, opencl_ctx):
     
     latlong_calc = None
     latlong = [np.nan]
+    norad_id_str = None
     
     sg.theme('Black')
     sg.set_options(element_padding=(0,0),margins=(0,0))
-    if SCREEN_WIDTH == 1024 and SCREEN_HEIGHT == 768:
-        font_size=8
+    if SCREEN_WIDTH == 1280 and ( SCREEN_HEIGHT == 800 or SCREEN_HEIGHT == 1024):
+        font_size=14
         title_font_size=30
-        url_font_size=8
         space_size=20
     else:
         font_size=16
         title_font_size=30
-        url_font_size=20
         space_size=20
         
     font=("Calibri", font_size)
@@ -437,11 +436,6 @@ def gui_display_images(queue, flags, opencl_ctx):
         font=("Calibri", title_font_size),
         expand_x=True
     )
-    url_txt = sg.Text(
-        'https://github.com/regwhitton/skyscape',
-        font=("Calibri", url_font_size),
-        expand_x=True
-    )
     time_txt = sg.Text(
         key='time',
         font=font,
@@ -450,7 +444,7 @@ def gui_display_images(queue, flags, opencl_ctx):
     norad_id_txt = sg.Text(
         key='norad_id',
         font=font,
-        expand_x=True
+        expand_x=False
     )
     name_txt = sg.Text(
         key='name',
@@ -482,13 +476,19 @@ def gui_display_images(queue, flags, opencl_ctx):
         font=font,
         expand_x=True
     )
+    copy_but = sg.Button(
+        'copy',
+        key='copy_norad_clipboard',
+        button_color=('white','black'),
+        font=("Calibri", round(font_size/2)),
+        visible=False
+    )
 
     info_panel = sg.Column([
             [title_txt],
-            [url_txt],
             [time_txt],
             [sg.Sizer(space_size, space_size)],
-            [norad_id_txt],
+            [norad_id_txt, sg.Sizer(30, 10), copy_but],
             [name_txt],
             [altitude_txt],
             [longitude_txt],
@@ -511,7 +511,9 @@ def gui_display_images(queue, flags, opencl_ctx):
     window = sg.Window('', layout,
         return_keyboard_events=True,
         location=(0,0),
-        size=sg.Window.get_screen_size(),
+        #size=sg.Window.get_screen_size(),
+        size=(SCREEN_WIDTH,SCREEN_HEIGHT),
+        #no_titlebar=True,
         # keep_on_top=True,
         # modal=True,
         finalize=True
@@ -560,6 +562,8 @@ def gui_display_images(queue, flags, opencl_ctx):
             if key == 'q' or key == 'escape':
                 flags.exiting=True
                 break
+            if key == 'copy_norad_clipboard' and norad_id_str != None:
+                sg.clipboard_set(norad_id_str)
 
         window['frame'].update(data=tk_frame)
         window['time'].update(value=ftime.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z'))
@@ -567,7 +571,9 @@ def gui_display_images(queue, flags, opencl_ctx):
         if pos.clicked:
             found,y,x = search_for_nonzero_near_click(info, pos.y, pos.x, 30)
             if not found:
+                norad_id_str = None
                 window['norad_id'].update('')
+                window['copy_norad_clipboard'].update(visible=False)
                 window['name'].update('')
                 window['tags'].update('')
                 tracked_sat_found = False
@@ -575,7 +581,9 @@ def gui_display_images(queue, flags, opencl_ctx):
             else:
                 sat_idx = info[y, x] - 1
                 latlong = latlong_calc.calculate_latlong(ftime, sat_idx)
-                window['norad_id'].update(value="NORAD id: {}".format(sat_info[sat_idx]['norad_id']))
+                norad_id_str = sat_info[sat_idx]['norad_id']
+                window['norad_id'].update(value="NORAD id: {}".format(norad_id_str))
+                window['copy_norad_clipboard'].update(visible=True)
                 window['name'].update(value="Name:        {}".format(sat_info[sat_idx]['name']))
                 window['tags'].update(value=sat_info[sat_idx]['tags'])
                 tracked_sat_found = True
