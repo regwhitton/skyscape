@@ -60,7 +60,8 @@ do
   fi
 
   if [[ ! ( "${query}" = "SPECIAL" && "${value}" = "decaying" ) &&
-        ! ( "${query}" = "GROUP"   && "${value}" = "analyst"  ) ]]
+        ! ( "${query}" = "GROUP"   && "${value}" = "analyst"  ) &&
+        ! ( "${query}" = "GROUP"   && "${value}" = "noaa"  ) ]]
   then
     satcat_feed_file="$feed_cache_dir/${query}_${value}.cat"
     if [[ "$satcat_feed_file" -ot "$feed_cache_dir/oldest-date-file" ]]
