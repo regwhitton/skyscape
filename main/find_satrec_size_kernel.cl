@@ -1,6 +1,5 @@
 #pragma OPENCL EXTENSION cl_khr_fp64 : enable
 
-#include "tle.h"
 #include "celestrak/sgp4/SGP4.h"
 
 __kernel void find_satrec_size(__global size_t *output_array)
