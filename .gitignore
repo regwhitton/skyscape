@@ -1,3 +1,4 @@
 venv
 .device.mk
 .device.mk.rusticl
+**/__pycache__

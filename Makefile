@@ -4,8 +4,8 @@ SHELL:=/bin/bash
 ACTIVATE:=. venv/bin/activate
 
 -include .device.mk
-OPENCL_ENV:=PYTHONPATH=main PYTHONPYCACHEPREFIX=caches/pycache PYOPENCL_COMPILER_OUTPUT=1 $(DEVICE_ENV)
-#OPENCL_ENV:=PYTHONPATH=main PYTHONPYCACHEPREFIX=caches/pycache $(DEVICE_ENV)
+OPENCL_ENV:=PYTHONPATH=main PYOPENCL_COMPILER_OUTPUT=1 $(DEVICE_ENV)
+#OPENCL_ENV:=PYTHONPATH=main $(DEVICE_ENV)
 
 # Create python virtual environment
 venv:
